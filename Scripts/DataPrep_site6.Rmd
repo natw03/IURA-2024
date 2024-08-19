@@ -1,0 +1,121 @@
+---
+title: "Prepare Data site6"
+author: "Natalie"
+date: "2024-08-19"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+library(mlr3)
+library(mlr3learners)
+library(mlr3spatial)
+library(terra)
+library(sf)
+library(ggplot2)
+library(tidyterra)
+library(here)
+```
+
+#Import all Data
+
+Import all rasters from site 6
+```{r load rasters}
+site_6_1 <- rast(here("Data", "site6", "6_1_rast.tif"))
+names(site_6_1) <- c("red", "green", "blue")
+site_6_2 <- rast(here("Data", "site6", "6_2_rast.tif"))
+names(site_6_2) <- c("red", "green", "blue")
+site_6_3 <- rast(here("Data", "site6", "6_3_rast.tif"))
+names(site_6_3) <- c("red", "green", "blue")
+site_6_4 <- rast(here("Data", "site6", "6_4_rast.tif"))
+names(site_6_4) <- c("red", "green", "blue")
+site_6_5 <- rast(here("Data", "site6", "6_5_rast.tif"))
+names(site_6_5) <- c("red", "green", "blue")
+```
+
+Import all polygons from site 6. Each sub-site contains 5 polygons of each class. 
+```{r load polygons}
+poly_6_1 <- vect(here("Data", "site6", "6_1_poly.shp"))
+poly_6_2 <- vect(here("Data", "site6", "6_2_poly.shp"))
+poly_6_3 <- vect(here("Data", "site6", "6_3_poly.shp"))
+poly_6_4 <- vect(here("Data", "site6", "6_4_poly.shp"))
+poly_6_5 <- vect(here("Data", "site6", "6_5_poly.shp"))
+```
+
+#Prepare data
+
+##Generate random points
+Create 200 random points within each polygon and save each one as a shapefile
+```{r shapefile list}
+#Create a list containing all the shapefiles
+polygons <- list(
+  poly_6_1 = "6_1_poly.shp",
+  poly_6_2 = "6_2_poly.shp",
+  poly_6_3 = "6_3_poly.shp",
+  poly_6_4 = "6_4_poly.shp",
+  poly_6_5 = "6_5_poly.shp"
+)
+```
+
+```{r random point loop}
+#Loop through each shapefile, generate 200 random points within each polygon, and save the points as a shapefile. 
+for(name in names(polygons)) {
+  poly <- vect(here("Data", "site6", polygons[[name]])) #get sub-site polygons
+  all_randomPts <- vect() #create empty spatVector to store all random points
+  #loop through each polygon in each shapefile
+  for(i in 1:nrow(poly)) {
+    single_poly <- poly[i, ] #get each individual polygon
+    randomPts <- spatSample(single_poly, 200, method = "random") #generate 200 random points in each polygon
+    all_randomPts <- rbind(all_randomPts, randomPts) #add random points to the empty spatVector
+  }
+  subsite_number <- sub("poly_6_", "", name)  # Extract the subsite number
+  points_filename <- paste0("6_", subsite_number, "_points.shp") #create filename for the new points dataset
+  writeVector(all_randomPts, here("Data", "site6", points_filename), filetype = "ESRI Shapefile")
+  print(paste("Finished generating points for site", name))
+}
+```
+##Extract rgb values of the raster at the random points generated
+Sample rgb values of the rasters at each sub-site and save the results as a geopackage
+```{r raster list}
+rasters <- list(
+  site_6_1 = site_6_1,
+  site_6_2 = site_6_2,
+  site_6_3 = site_6_3,
+  site_6_4 = site_6_4,
+  site_6_5 = site_6_5
+)
+```
+
+```{r points list}
+points <- list(
+  pts_6_1 = vect(here("Data", "site6", "6_1_points.shp")),
+  pts_6_2 = vect(here("Data", "site6", "6_2_points.shp")),
+  pts_6_3 = vect(here("Data", "site6", "6_3_points.shp")),
+  pts_6_4 = vect(here("Data", "site6", "6_4_points.shp")),
+  pts_6_5 = vect(here("Data", "site6", "6_5_points.shp"))
+)
+```
+
+```{r extraction loop}
+#Loop through each raster and the corresponding points, and extract rgb values
+for(raster_name in names(rasters)) {
+  subsite_identifier <- sub("site_", "", raster_name)
+  points_name <- paste0("pts_", subsite_identifier)
+  if (points_name %in% names(points)) {
+    raster <- rasters[[raster_name]]
+    point_set <- points[[points_name]]
+    rgb_values <- extract(raster, point_set)
+    point_data <- cbind(point_set, rgb_values)
+    gpkg_filename <- paste0(subsite_identifier, "_pts_rgb.gpkg")
+    writeVector(point_data, here("Data", "site6", gpkg_filename), filetype = "GPKG")
+    print(paste("Finished extracting and saving RGB values for site", subsite_identifier))
+  } else {
+    print(paste("No matching points file found for raster", raster_name))
+  }
+}
+```
+
+
