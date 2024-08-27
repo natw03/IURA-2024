@@ -1,0 +1,42 @@
+---
+title: "randomEffectsANOVA"
+author: "Natalie"
+date: "2024-08-23"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+library(here)
+library(nlme)
+library(dplyr)
+library(VCA)
+```
+
+Import classification accuracy dataset
+```{r}
+class_acc <- read.csv(here("Data", "class_acc.csv"))
+str(class_acc)
+```
+```{r RE ANOVA}
+re_ANOVA <- lme(Classif_Acc ~ 1, random = ~ 1 | Plot_ID/Subplot_ID, data = class_acc)
+re_ANOVA
+```
+
+```{r variance components}
+anova_varcomp <- VarCorr(re_ANOVA)
+anova_varcomp
+```
+```{r best train ID}
+mean_acc <- class_acc %>%
+  group_by(Training_ID) %>%
+  summarize(mean_acc = mean(Classif_Acc, na.rm=T))
+print(mean_acc)
+```
+```{r}
+varPlot(form = Classif_Acc ~ Plot_ID/Subplot_ID, Data = class_acc, YLabel = list(text = "Classification Accuracy"))
+```
+Anomaly in site 5_5 and 6_3
