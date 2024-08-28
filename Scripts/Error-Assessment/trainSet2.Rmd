@@ -1,0 +1,469 @@
+---
+title: "Train Set 2"
+author: "Natalie"
+date: "2024-08-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages}
+library(mlr3)
+library(mlr3learners)
+library(mlr3spatial)
+library(terra)
+library(sf)
+library(ggplot2)
+library(tidyterra)
+library(here)
+library(dplyr)
+```
+
+#Prepare training data
+Import all data from subsites 1 to be used for training the model
+```{r}
+pts_1_2 <- read_sf(here("Data", "site1", "1_2_pts_rgb.gpkg"), stringsAsFactors = T)
+pts_2_2 <- read_sf(here("Data", "site2", "2_2_pts_rgb.gpkg"), stringsAsFactors = T)
+pts_3_2 <- read_sf(here("Data", "site3", "3_2_pts_rgb.gpkg"), stringsAsFactors = T)
+pts_4_2 <- read_sf(here("Data", "site4", "4_2_pts_rgb.gpkg"), stringsAsFactors = T)
+pts_5_2 <- read_sf(here("Data", "site5", "5_2_pts_rgb.gpkg"), stringsAsFactors = T)
+pts_6_2 <- read_sf(here("Data", "site6", "6_2_pts_rgb.gpkg"), stringsAsFactors = T)
+pts_7_2 <- read_sf(here("Data", "site7", "7_2_pts_rgb.gpkg"), stringsAsFactors = T)
+```
+
+Select only the columns we want, which are className, red, green, blue and geom. 
+```{r}
+#Create a list containing all the data
+trainSet2_list <- list(pts_1_2, pts_2_2, pts_3_2, pts_4_2, pts_5_2, pts_6_2, pts_7_2)
+
+#Select the columns that we want
+select_columns <- function(gpkg) {
+  gpkg %>% select(className, red, green, blue, geom)
+}
+
+#Ensure all datasets only contain the columns we want
+trainSet2_list <- lapply(trainSet2_list, select_columns) 
+
+#Merge all datasets to create the full training dataset
+trainSet2 <- do.call(bind_rows, trainSet2_list)
+trainSet2
+```
+# Create model
+
+Create a spatial mlr3 task
+```{r}
+trainSet2_tsk <- as_task_classif_st(trainSet2, target = "className")
+```
+
+Partition the data into training and testing sets 
+```{r}
+set.seed(100)
+trainSet2_split <- partition(trainSet2_tsk, ratio = 0.7)
+```
+
+Create random forest learner
+```{r}
+trainSet2_lrn <- lrn("classif.ranger")
+```
+
+Train the learner
+```{r}
+trainSet2_train <- trainSet2_lrn$train(trainSet2_tsk, trainSet2_split$train)
+```
+
+Test the learner's accuracy
+```{r}
+trainSet2_test <- trainSet2_lrn$predict(trainSet2_tsk, trainSet2_split$test)
+trainSet2_test$score(msr("classif.acc"))
+```
+
+# Obtain classification accuracy of other subsites in site 1
+
+Import site 1 points with known classes
+```{r}
+pts_1_1 <- vect(here("Data", "site1", "1_1_points.shp"))
+pts_1_3 <- vect(here("Data", "site1", "1_3_points.shp"))
+pts_1_4 <- vect(here("Data", "site1", "1_4_points.shp"))
+pts_1_5 <- vect(here("Data", "site1", "1_5_points.shp"))
+```
+
+
+Import site 1 rasters for prediction
+```{r}
+rast_1_1 <- rast(here("Data", "site1", "1_1_rast.tif"))
+rast_1_3 <- rast(here("Data", "site1", "1_3_rast.tif"))
+rast_1_4 <- rast(here("Data", "site1", "1_4_rast.tif"))
+rast_1_5 <- rast(here("Data", "site1", "1_5_rast.tif"))
+```
+
+Rename raster layers
+```{r}
+subsite_ids <- setdiff(1:5, 2)
+for (subsite_id in subsite_ids) {
+  raster <- get(paste0("rast_1_", subsite_id))
+  names(raster) <- c("red", "green", "blue")
+  assign(paste0("rast_1_", subsite_id), raster)
+  print(paste("Renamed layers for site 1_", subsite_id))
+}
+```
+Create vector to store accuracy results
+```{r}
+site1_acc <- numeric(length(subsite_ids))
+names(site1_acc) <- paste0("site_1_", subsite_ids)
+```
+
+Create a loop that classifies each raster site, extracts the classnames at certain points, and compares them to the known classnames of those points to obtain classification accuracy. 
+```{r}
+for (i in seq_along(subsite_ids)) {
+  subsite_id <- subsite_ids[i]
+  raster_to_classify_1 <- get(paste0("rast_1_", subsite_id))
+  pts_shapefile_1 <- get(paste0("pts_1_", subsite_id))
+  classified_raster_1 <- predict_spatial(raster_to_classify_1, trainSet2_lrn)
+  classified_file_path_1 <- here("Data", "site1", paste0("1_", subsite_id, "_classified.tif"))
+  writeRaster(classified_raster_1, classified_file_path_1, overwrite=T)
+  extracted_vals_1 <- extract(classified_raster_1, pts_shapefile_1)
+  raster_className <- extracted_vals_1[,2]
+  shapefile_className <- pts_shapefile_1$className
+  site1_acc_vect <- raster_className == shapefile_className
+  class_acc_1 <- sum(site1_acc_vect) / length(site1_acc_vect)
+  site1_acc[i] <- class_acc_1
+  print(paste("Classification Accuracy for site1_", subsite_id, ":", class_acc_1))
+}
+```
+
+#Obtain classification accuracy of other subsites in site 2
+Import site 2 points with known classes
+```{r}
+pts_2_1 <- vect(here("Data", "site2", "2_1_points.shp"))
+pts_2_3 <- vect(here("Data", "site2", "2_3_points.shp"))
+pts_2_4 <- vect(here("Data", "site2", "2_4_points.shp"))
+pts_2_5 <- vect(here("Data", "site2", "2_5_points.shp"))
+```
+
+
+Import site 2 rasters for prediction
+```{r}
+rast_2_1 <- rast(here("Data", "site2", "2_1_rast.tif"))
+rast_2_3 <- rast(here("Data", "site2", "2_3_rast.tif"))
+rast_2_4 <- rast(here("Data", "site2", "2_4_rast.tif"))
+rast_2_5 <- rast(here("Data", "site2", "2_5_rast.tif"))
+```
+
+Rename raster layers
+```{r}
+subsite_ids <- setdiff(1:5, 2)
+for (subsite_id in subsite_ids) {
+  raster <- get(paste0("rast_2_", subsite_id))
+  names(raster) <- c("red", "green", "blue")
+  assign(paste0("rast_2_", subsite_id), raster)
+  print(paste("Renamed layers for site 2_", subsite_id))
+}
+```
+Create vector to store accuracy results
+```{r}
+site2_acc <- numeric(length(subsite_ids))
+names(site2_acc) <- paste0("site_2_", subsite_ids)
+```
+
+```{r}
+for (i in seq_along(subsite_ids)) {
+  subsite_id <- subsite_ids[i]
+  raster_to_classify_2 <- get(paste0("rast_2_", subsite_id))
+  pts_shapefile_2 <- get(paste0("pts_2_", subsite_id))
+  classified_raster_2 <- predict_spatial(raster_to_classify_2, trainSet2_lrn)
+  classified_file_path_2 <- here("Data", "site2", paste0("2_", subsite_id, "_classified.tif"))
+  writeRaster(classified_raster_2, classified_file_path_2, overwrite=T)
+  extracted_vals_2 <- extract(classified_raster_2, pts_shapefile_2)
+  raster_className <- extracted_vals_2[,2]
+  shapefile_className <- pts_shapefile_2$className
+  site2_acc_vect <- raster_className == shapefile_className
+  class_acc_2 <- sum(site2_acc_vect) / length(site2_acc_vect)
+  site2_acc[i] <- class_acc_2
+  print(paste("Classification Accuracy for site2_", subsite_id, ":", class_acc_2))
+}
+print(site2_acc)
+```
+#Obtain classification accuracy of other subsites in site 3
+Import site 3 points with known classes
+```{r}
+pts_3_1 <- vect(here("Data", "site3", "3_1_points.shp"))
+pts_3_3 <- vect(here("Data", "site3", "3_3_points.shp"))
+pts_3_4 <- vect(here("Data", "site3", "3_4_points.shp"))
+pts_3_5 <- vect(here("Data", "site3", "3_5_points.shp"))
+```
+
+
+Import site 3 rasters for prediction
+```{r}
+rast_3_1 <- rast(here("Data", "site3", "3_1_rast.tif"))
+rast_3_3 <- rast(here("Data", "site3", "3_3_rast.tif"))
+rast_3_4 <- rast(here("Data", "site3", "3_4_rast.tif"))
+rast_3_5 <- rast(here("Data", "site3", "3_5_rast.tif"))
+```
+
+Rename raster layers
+```{r}
+subsite_ids <- setdiff(1:5, 2)
+for (subsite_id in subsite_ids) {
+  raster <- get(paste0("rast_3_", subsite_id))
+  names(raster) <- c("red", "green", "blue")
+  assign(paste0("rast_3_", subsite_id), raster)
+  print(paste("Renamed layers for site 3_", subsite_id))
+}
+```
+
+Create vector to store accuracy results
+```{r}
+site3_acc <- numeric(length(subsite_ids))
+names(site3_acc) <- paste0("site_3_", subsite_ids)
+```
+
+Create a loop that classifies each raster site, extracts the classnames at certain points, and compares them to the known classnames of those points to obtain classification accuracy. 
+```{r}
+for (i in seq_along(subsite_ids)) {
+  subsite_id <- subsite_ids[i]
+  raster_to_classify_3 <- get(paste0("rast_3_", subsite_id))
+  pts_shapefile_3 <- get(paste0("pts_3_", subsite_id))
+  classified_raster_3 <- predict_spatial(raster_to_classify_3, trainSet2_lrn)
+  classified_file_path_3 <- here("Data", "site3", paste0("3_", subsite_id, "_classified.tif"))
+  writeRaster(classified_raster_3, classified_file_path_3, overwrite=T)
+  extracted_vals_3 <- extract(classified_raster_3, pts_shapefile_3)
+  print(sum(is.na(extracted_vals_3)))
+  raster_className <- extracted_vals_3[,2]
+  shapefile_className <- pts_shapefile_3$className
+  site3_acc_vect <- raster_className == shapefile_className
+  class_acc_3 <- sum(site3_acc_vect) / length(site3_acc_vect)
+  site3_acc[i] <- class_acc_3
+  print(paste("Classification Accuracy for site3_", subsite_id, ":", class_acc_3))
+}
+print(site3_acc)
+```
+#Obtain classification accuracy of other subsites in site 4
+Import site 4 points with known classes
+```{r}
+pts_4_1 <- vect(here("Data", "site4", "4_1_points.shp"))
+pts_4_3 <- vect(here("Data", "site4", "4_3_points.shp"))
+pts_4_4 <- vect(here("Data", "site4", "4_4_points.shp"))
+pts_4_5 <- vect(here("Data", "site4", "4_5_points.shp"))
+```
+
+
+Import site 4 rasters for prediction
+```{r}
+rast_4_1 <- rast(here("Data", "site4", "4_1_rast.tif"))
+rast_4_3 <- rast(here("Data", "site4", "4_3_rast.tif"))
+rast_4_4 <- rast(here("Data", "site4", "4_4_rast.tif"))
+rast_4_5 <- rast(here("Data", "site4", "4_5_rast.tif"))
+```
+
+Rename raster layers
+```{r}
+subsite_ids <- setdiff(1:5, 2)
+for (subsite_id in subsite_ids) {
+  raster <- get(paste0("rast_4_", subsite_id))
+  names(raster) <- c("red", "green", "blue")
+  assign(paste0("rast_4_", subsite_id), raster)
+  print(paste("Renamed layers for site 4_", subsite_id))
+}
+```
+
+Create vector to store accuracy results
+```{r}
+site4_acc <- numeric(length(subsite_ids))
+names(site4_acc) <- paste0("site_4_", subsite_ids)
+```
+
+Create a loop that classifies each raster site, extracts the classnames at certain points, and compares them to the known classnames of those points to obtain classification accuracy. 
+```{r}
+for (i in seq_along(subsite_ids)) {
+  subsite_id <- subsite_ids[i]
+  raster_to_classify_4 <- get(paste0("rast_4_", subsite_id))
+  pts_shapefile_4 <- get(paste0("pts_4_", subsite_id))
+  classified_raster_4 <- predict_spatial(raster_to_classify_4, trainSet2_lrn)
+  classified_file_path_4 <- here("Data", "site4", paste0("4_", subsite_id, "_classified.tif"))
+  writeRaster(classified_raster_4, classified_file_path_4, overwrite=T)
+  extracted_vals_4 <- extract(classified_raster_4, pts_shapefile_4)
+  raster_className <- extracted_vals_4[,2]
+  shapefile_className <- pts_shapefile_4$className
+  site4_acc_vect <- raster_className == shapefile_className
+  class_acc_4 <- sum(site4_acc_vect) / length(site4_acc_vect)
+  site4_acc[i] <- class_acc_4
+  print(paste("Classification Accuracy for site3_", subsite_id, ":", class_acc_4))
+}
+print(site4_acc)
+```
+
+#Obtain classification accuracy of other subsites in site 5
+Import site 5 points with known classes
+```{r}
+pts_5_1 <- vect(here("Data", "site5", "5_1_points.shp"))
+pts_5_3 <- vect(here("Data", "site5", "5_3_points.shp"))
+pts_5_4 <- vect(here("Data", "site5", "5_4_points.shp"))
+pts_5_5 <- vect(here("Data", "site5", "5_5_points.shp"))
+```
+
+
+Import site 5 rasters for prediction
+```{r}
+rast_5_1 <- rast(here("Data", "site5", "5_1_rast.tif"))
+rast_5_3 <- rast(here("Data", "site5", "5_3_rast.tif"))
+rast_5_4 <- rast(here("Data", "site5", "5_4_rast.tif"))
+rast_5_5 <- rast(here("Data", "site5", "5_5_rast.tif"))
+```
+
+Rename raster layers
+```{r}
+subsite_ids <- setdiff(1:5, 2)
+for (subsite_id in subsite_ids) {
+  raster <- get(paste0("rast_5_", subsite_id))
+  names(raster) <- c("red", "green", "blue")
+  assign(paste0("rast_5_", subsite_id), raster)
+  print(paste("Renamed layers for site 5_", subsite_id))
+}
+```
+
+Create vector to store accuracy results
+```{r}
+site5_acc <- numeric(length(subsite_ids))
+names(site5_acc) <- paste0("site_5_", subsite_ids)
+```
+
+Create a loop that classifies each raster site, extracts the classnames at certain points, and compares them to the known classnames of those points to obtain classification accuracy. 
+```{r}
+for (i in seq_along(subsite_ids)) {
+  subsite_id <- subsite_ids[i]
+  raster_to_classify_5 <- get(paste0("rast_5_", subsite_id))
+  pts_shapefile_5 <- get(paste0("pts_5_", subsite_id))
+  classified_raster_5 <- predict_spatial(raster_to_classify_5, trainSet2_lrn)
+  classified_file_path_5 <- here("Data", "site5", paste0("5_", subsite_id, "_classified.tif"))
+  writeRaster(classified_raster_5, classified_file_path_5, overwrite=T)
+  extracted_vals_5 <- extract(classified_raster_5, pts_shapefile_5)
+  raster_className <- extracted_vals_5[,2]
+  shapefile_className <- pts_shapefile_5$className
+  site5_acc_vect <- raster_className == shapefile_className
+  class_acc_5 <- sum(site5_acc_vect) / length(site5_acc_vect)
+  site5_acc[i] <- class_acc_5
+  print(paste("Classification Accuracy for site5_", subsite_id, ":", class_acc_5))
+}
+print(site5_acc)
+```
+
+# Obtain classification accuracy of other subsites in site 6
+Import site 6 points with known classes
+```{r}
+pts_6_1 <- vect(here("Data", "site6", "6_1_points.shp"))
+pts_6_3 <- vect(here("Data", "site6", "6_3_points.shp"))
+pts_6_4 <- vect(here("Data", "site6", "6_4_points.shp"))
+pts_6_5 <- vect(here("Data", "site6", "6_5_points.shp"))
+```
+
+
+Import site 6 rasters for prediction
+```{r}
+rast_6_1 <- rast(here("Data", "site6", "6_1_rast.tif"))
+rast_6_3 <- rast(here("Data", "site6", "6_3_rast.tif"))
+rast_6_4 <- rast(here("Data", "site6", "6_4_rast.tif"))
+rast_6_5 <- rast(here("Data", "site6", "6_5_rast.tif"))
+```
+
+Rename raster layers
+```{r}
+subsite_ids <- setdiff(1:5, 2)
+for (subsite_id in subsite_ids) {
+  raster <- get(paste0("rast_6_", subsite_id))
+  names(raster) <- c("red", "green", "blue")
+  assign(paste0("rast_6_", subsite_id), raster)
+  print(paste("Renamed layers for site 6_", subsite_id))
+}
+```
+Create vector to store accuracy results
+```{r}
+site6_acc <- numeric(length(subsite_ids))
+names(site6_acc) <- paste0("site_6_", subsite_ids)
+```
+
+Create a loop that classifies each raster site, extracts the classnames at certain points, and compares them to the known classnames of those points to obtain classification accuracy. 
+```{r}
+for (i in seq_along(subsite_ids)) {
+  subsite_id <- subsite_ids[i]
+  raster_to_classify_6 <- get(paste0("rast_6_", subsite_id))
+  pts_shapefile_6 <- get(paste0("pts_6_", subsite_id))
+  classified_raster_6 <- predict_spatial(raster_to_classify_6, trainSet2_lrn)
+  classified_file_path_6 <- here("Data", "site6", paste0("6_", subsite_id, "_classified.tif"))
+  writeRaster(classified_raster_6, classified_file_path_6, overwrite=T)
+  extracted_vals_6 <- extract(classified_raster_6, pts_shapefile_6)
+  raster_className <- extracted_vals_6[,2]
+  shapefile_className <- pts_shapefile_6$className
+  site6_acc_vect <- raster_className == shapefile_className
+  class_acc_6 <- sum(site6_acc_vect) / length(site6_acc_vect)
+  site6_acc[i] <- class_acc_6
+  print(paste("Classification Accuracy for site6_", subsite_id, ":", class_acc_6))
+}
+print(site6_acc)
+```
+
+#Obtain classification accuracy of other subsites in site 7
+Import site 7 points with known classes
+```{r}
+pts_7_1 <- vect(here("Data", "site7", "7_1_points.shp"))
+pts_7_3 <- vect(here("Data", "site7", "7_3_points.shp"))
+pts_7_4 <- vect(here("Data", "site7", "7_4_points.shp"))
+pts_7_5 <- vect(here("Data", "site7", "7_5_points.shp"))
+```
+
+
+Import site 7 rasters for prediction
+```{r}
+rast_7_1 <- rast(here("Data", "site7", "7_1_rast.tif"))
+rast_7_3 <- rast(here("Data", "site7", "7_3_rast.tif"))
+rast_7_4 <- rast(here("Data", "site7", "7_4_rast.tif"))
+rast_7_5 <- rast(here("Data", "site7", "7_5_rast.tif"))
+```
+
+Rename raster layers
+```{r}
+subsite_ids <- setdiff(1:5, 2)
+for (subsite_id in subsite_ids) {
+  raster <- get(paste0("rast_7_", subsite_id))
+  names(raster) <- c("red", "green", "blue")
+  assign(paste0("rast_7_", subsite_id), raster)
+  print(paste("Renamed layers for site 7_", subsite_id))
+}
+```
+Create vector to store accuracy results
+```{r}
+site7_acc <- numeric(length(subsite_ids))
+names(site7_acc) <- paste0("site_7_", subsite_ids)
+```
+
+Create a loop that classifies each raster site, extracts the classnames at certain points, and compares them to the known classnames of those points to obtain classification accuracy. 
+```{r}
+for (i in seq_along(subsite_ids)) {
+  subsite_id <- subsite_ids[i]
+  raster_to_classify_7 <- get(paste0("rast_7_", subsite_id))
+  pts_shapefile_7 <- get(paste0("pts_7_", subsite_id))
+  classified_raster_7 <- predict_spatial(raster_to_classify_7, trainSet2_lrn)
+  classified_file_path_7 <- here("Data", "site7", paste0("7_", subsite_id, "_classified.tif"))
+  writeRaster(classified_raster_7, classified_file_path_7, overwrite=T)
+  extracted_vals_7 <- extract(classified_raster_7, pts_shapefile_7)
+  raster_className <- extracted_vals_7[,2]
+  shapefile_className <- pts_shapefile_7$className
+  site7_acc_vect <- raster_className == shapefile_className
+  class_acc_7 <- sum(site7_acc_vect) / length(site7_acc_vect)
+  site7_acc[i] <- class_acc_7
+  print(paste("Classification Accuracy for site7_", subsite_id, ":", class_acc_3))
+}
+print(site7_acc)
+```
+Print all accuracy results
+```{r}
+print(site1_acc)
+print(site2_acc)
+print(site3_acc)
+print(site4_acc)
+print(site5_acc)
+print(site6_acc)
+print(site7_acc)
+```
