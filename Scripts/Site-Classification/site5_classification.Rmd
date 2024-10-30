@@ -1,0 +1,155 @@
+---
+title: "Site 5 Classification"
+author: "Natalie"
+date: "2024-08-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load packages, message=F}
+library(mlr3)
+library(mlr3learners)
+library(mlr3spatial)
+library(terra)
+library(sf)
+library(ggplot2)
+library(tidyterra)
+library(here)
+```
+# Import Data
+Import raster and training polygons
+```{r}
+site5 <- rast(here("Data", "site5", "site5.tif"))
+site5_poly <- vect(here("Data", "site5", "site5_poly.shp"))
+```
+
+# Prepare data for model training
+Generate 200 random points within each polygon
+```{r}
+# Create empty spatvector to store points
+site5_pts <- vect()
+```
+
+```{r}
+#Loop through each polygon in the shapefile
+set.seed(103)
+for (i in 1:nrow(site5_poly)) {
+  single_poly <- site5_poly[i, ]
+  randomPts <- spatSample(single_poly, 200, method = "random")
+  site5_pts <- rbind(site5_pts, randomPts)
+}
+print(site5_pts)
+```
+```{r}
+#Save points as a shapefile
+writeVector(site5_pts, here("Data", "site5", "site5_pts.shp"), filetype = "ESRI Shapefile", overwrite=T) #can omit
+```
+Note: it is not necessary to save the point shapefile to your computer. I only do it so I have a copy of the files for storage purposes. 
+
+Extract RGB values from the raster at the training points
+```{r}
+#Rename raster layers
+names(site5) <- c("red", "green", "blue")
+```
+
+```{r}
+#Extract raster values at the points
+site5_extracted <- extract(site5, site5_pts)
+```
+
+```{r}
+#Combine raster values with the point data
+site5_pts_rgb <- cbind(site5_pts, site5_extracted)
+sum(is.na(site5_pts_rgb))
+writeVector(site5_pts_rgb, here("Data", "site5", "site5_pts_rgb.gpkg"), filetype = "GPKG", overwrite = T) #can omit
+```
+
+#Model training
+Import geopackage
+```{r}
+# The geopackage must be imported using the "read_sf" function for it to work with the classifier
+site5_gpkg <- read_sf(here("Data", "site5", "site5_pts_rgb.gpkg"), stringsAsFactors = T)
+site5_gpkg <- site5_gpkg[, c("className", "red", "green", "blue", "geom")]
+sum(is.na(site5_gpkg))
+```
+
+Create mlr3 task
+```{r}
+site5_tsk <- as_task_classif_st(site5_gpkg, target = "className")
+```
+
+Partition the data into 70% training and 30% testing.
+```{r}
+set.seed(100)
+site5_split <- partition(site5_tsk, ratio = 0.7)
+```
+
+Create a random forest learner 
+```{r}
+site5_lrn <- lrn("classif.ranger")
+```
+
+Train the model
+```{r}
+site5_train <- site5_lrn$train(site5_tsk, site5_split$train)
+```
+
+Use the test set to obtain the model's accuracy
+```{r}
+site5_test <- site5_lrn$predict(site5_tsk, site5_split$test)
+site5_test$score(msr("classif.acc"))
+```
+
+# Classifying the site and obtaining area and percent coverage 
+
+Apply the learner to the entire raster. This step can take a VERY long time depending on how big your raster is. 
+```{r}
+site5_classified <- predict_spatial(site5, site5_lrn)
+```
+Save the classified raster (optional)
+```{r}
+writeRaster(site5_classified, here("Data", "site5", "site5_classified.tif"))
+```
+
+Calculate the area of each class
+```{r}
+# Obtain the area of each pixel in sq meters
+pixel_res <- res(site5_classified)[1]
+pixel_area <- pixel_res^2
+```
+
+```{r}
+# Calculate how many pixels there are in each class and store it in a dataframe
+class_frequencies <- freq(site5_classified)
+class_frequencies_df <- as.data.frame(class_frequencies)
+```
+
+```{r}
+#calculate area of each class
+class_frequencies_df$area_m2 <- class_frequencies_df$count * pixel_area
+```
+
+Calculate the percent coverage of each class
+```{r}
+#get the total area of the raster
+total_area_m2 <- sum(class_frequencies_df$area_m2)
+```
+
+```{r}
+#calculate percent coverage
+class_frequencies_df$percent_coverage <- (class_frequencies_df$area_m2 / total_area_m2) * 100
+```
+
+```{r}
+#rename class values
+class_frequencies_df$class <- c("antelope brush", "vegetation", "ground")
+```
+
+```{r}
+#display area and percent coverage
+print(class_frequencies_df)
+```
+
